@@ -127,6 +127,25 @@ Proof.
   induction v1; cbn; congruence.
 Qed.
 
+Lemma Vector_in_app {X n1 n2} (x : X) (v1 : Vector.t X n1) (v2 : Vector.t X n2):
+  Vector.In x (v1 ++ v2) <-> Vector.In x v1 \/ Vector.In x v2.
+Proof.
+  induction v1; cbn.
+  - firstorder. inversion H.
+  - split.
+    + intros [-> | H] % In_cons.
+      * left. econstructor.
+      * eapply IHv1 in H as [ | ]; eauto. left. now econstructor.
+    + intros [ [ -> | ] % In_cons | ]; econstructor; intuition.
+Qed.
+
+Lemma dupfree_help k n : VectorDupfree.dupfree (Fin.L n (Fin.R k Fin0) :: tabulate (fun x : Fin.t n => Fin.R (k + 1) x) ++ tabulate (fun x : Fin.t k => Fin.L n (Fin.L 1 x))).
+Proof.
+  econstructor. intros [ [i Hi % (f_equal (fun x => proj1_sig (Fin.to_nat x)))] % in_tabulate | [i Hi % (f_equal (fun x => proj1_sig (Fin.to_nat x)))] % in_tabulate ] % Vector_in_app.
+  + rewrite Fin.L_sanity, !Fin.R_sanity in Hi. cbn in Hi. lia.
+  + rewrite !Fin.L_sanity, !Fin.R_sanity in Hi. destruct (Fin.to_nat i); cbn in *; lia.
+Qed.
+
 Lemma TM_computable_rel'_spec k R :
   functional R ->
   @TM_computable_rel' k R -> TM_computable R.
@@ -136,8 +155,8 @@ Proof.
   exists n, Σ, s, b. split. exact Hdiff.
   eexists (LiftTapes M (Fin.L n (Fin.R k Fin0) :::  tabulate (n := n) (fun x => Fin.R (k + 1) x) ++ (tabulate (n := k) (fun x => Fin.L n (Fin.L 1 x))))).
   split.
-  - eapply Realise_monotone. eapply LiftTapes_Realise. admit. eapply H1.
-    intros tps [[] tps'] H v ->.
+  - eapply Realise_monotone. eapply LiftTapes_Realise. eapply dupfree_help.
+    eapply H1. intros tps [[] tps'] H v ->.
     cbn in H. destruct H as [H H'].
     destruct (H v) as (m & Hm1 & Hm2).
     + f_equal.
@@ -146,7 +165,7 @@ Proof.
     + exists m. split. 2:eassumption. erewrite nth_error_to_list, Hm1. reflexivity.
       rewrite Fin.L_sanity, Fin.R_sanity. cbn. lia.
   - exists f. eapply TerminatesIn_monotone.
-    eapply LiftTapes_Terminates. admit. eapply H2.
+    eapply LiftTapes_Terminates. eapply dupfree_help. eapply H2.
     intros tps i (v & m & HR & -> & Hf); subst.
     exists v, m. split. eauto. split; try eassumption.
     { unfold select. clear. cbn. f_equal.
@@ -210,14 +229,98 @@ Qed.
 
 Import VectorNotations.
 
+From Undecidability Require Import WriteString.
+
+Lemma WriteString_Fun_rightof' Σ c rs str c0 :
+  WriteString_Fun Rmove (@rightof Σ c rs) str =
+  match str with
+  | nil => rightof c rs 
+  | _ => midtape (rev (removelast str) ++ c :: rs) (last str c0) []
+  end.
+Proof.
+  induction str in c, rs |- *; rewrite WriteString_Fun_eq.
+  - reflexivity.
+  - cbn. destruct str.
+    + reflexivity. 
+    + rewrite IHstr. f_equal. generalize (removelast (σ :: str)). intros.
+    cbn. now rewrite <- !app_assoc.
+Qed.
+
+Lemma WriteString_Fun_rightof Σ c rs str :
+  str <> nil ->
+  WriteString_Fun Rmove (@rightof Σ c rs) str =
+  midtape (rev (removelast str) ++ c :: rs) (last str c) [].
+Proof.
+  destruct str; intros; try congruence.
+  now erewrite WriteString_Fun_rightof'.
+Qed.
+
+Lemma in_tl {X} (x : X) l :
+   In x (tl l) -> In x l.
+Proof.
+  destruct l; firstorder.
+Qed.
+
 Section APP_right.
 
-  Definition APP_right : pTM (sigPro)^+ unit 2.
-  Admitted.
+  Definition APP_right : pTM (sigPro)^+ unit 2 :=    
+    LiftTapes (MoveToSymbol (fun x => match x with inl STOP => true | _ => false end) (fun s => s)) [| Fin1 |] ;;
+    LiftTapes (Move Lmove) [| Fin1 |] ;;
+    LiftTapes (Move Rmove) [| Fin0 |] ;;
+    CopySymbols (fun x => match x with inl STOP => true | _ => false end) ;;
+    LiftTapes (Move Lmove) [| Fin1 |] ;;
+    LiftTapes (WriteString Rmove (map inr (encode_list Encode_Com [appT]) ++ [inl STOP])) [| Fin1 |] ;;
+    LiftTapes (MoveToSymbol_L (fun x => match x with inl START => true | _ => false end) (fun s => s)) [| Fin1 |] ;;
+    LiftTapes (MoveToSymbol_L (fun x => match x with inl START => true | _ => false end) (fun s => s)) [| Fin0 |].
 
   Lemma APP_right_realise :
-    Realise APP_right (fun t '(r, t') => forall s1 s2 : L.term, t[@Fin0] ≃ compile s1 -> t[@Fin1] ≃ compile s2 -> t'[@Fin0] ≃ compile (L.app s1 s2)).
-  Admitted.
+    Realise APP_right (fun t '(r, t') => forall s1 s2 : L.term, t[@Fin1] ≃ compile s1 -> t[@Fin0] ≃ compile s2 -> t'[@Fin1] ≃ compile (L.app s1 s2) /\ t'[@Fin0] ≃ compile s2).
+  Proof.
+    eapply Realise_monotone. { unfold APP_right. TM_Correct. eapply RealiseIn_Realise. eapply WriteString_Sem. }
+    intros tin [[] tout] H s1 s2 Hs1 Hs2. TMSimp. destruct_tapes. TMSimp. 
+    destruct Hs1 as [r1 ->]. destruct Hs2 as [r2 ->]. cbn in *. rewrite map_id in H2.
+    rewrite CopySymbols_correct_moveright in H2. 3: reflexivity.
+    2:{ intros ? (? & <- & ?) % in_map_iff. reflexivity. } inv H2. cbn. split.
+    2:{ rewrite MoveToSymbol_L_correct_midtape; try reflexivity. eexists. cbn. now rewrite !map_id, rev_involutive.
+        now intros ? (? & <- & ?) % in_rev % in_map_iff. }
+    cbn. autorewrite with tape. rewrite map_length.
+    rewrite MoveToSymbol_correct_midtape; try reflexivity.
+    2:{ now intros ? (? & <- & ?) % in_map_iff. }
+    cbn. autorewrite with tape. 
+    rewrite skipn_all2. 2:{ destruct s2; cbn; rewrite ?encode_list_app, !app_length; cbn; lia. }
+    rewrite WriteString_Fun_eq. cbn. autorewrite with tape. cbn.
+    rewrite WriteString_Fun_eq. cbn. autorewrite with tape. 
+    rewrite WriteString_Fun_rightof. 2:congruence.
+    rewrite !tl_app.
+    match goal with [ |- context [midtape ?L _ _]  ] => 
+      assert (L = ((rev
+      (removelast
+         [inr (sigList_X (sigSum_Y appAT)); inr sigList_nil; inl STOP]) ++
+    inr (sigList_X sigSum_inr)
+    :: inr sigList_cons
+       :: tl (rev (map inr (encode_list Encode_Com (compile s2)))) ++
+          tl
+            (rev
+               (map (fun s : boundary + sigList sigCom => s)
+                  (map inr
+                     (map (fun a : sigPro => a)
+                        (encode_list Encode_Com (compile s1)))))))) ++ inl START :: r1)%list as -> end.
+    cbn. rewrite <- !app_assoc. reflexivity.
+    rewrite MoveToSymbol_L_correct_midtape; try reflexivity.
+    eexists. f_equal. rewrite !map_id. cbn.
+    rewrite !tl_rev. rewrite !rev_app_distr, !rev_involutive.
+    rewrite <- !app_assoc. rewrite !encode_list_app, !map_app. cbn.
+    rewrite !map_id. cbn. rewrite <- !app_assoc. cbn.
+    rewrite !ListTM.map_removelast. reflexivity.
+
+    cbn. rewrite !map_id.
+    cbn. intros ? [<- | [<- | [<- | [<- | [(? & <- & ?) % in_tl % in_rev % in_map_iff | (? & <- & ?) % in_tl % in_rev % in_map_iff  ] % in_app_iff]]]]; try reflexivity.
+    
+    now intros ? % rev_eq_nil % map_eq_nil % map_eq_nil % map_eq_nil % encode_list_neq_nil.
+
+    now intros ? % rev_eq_nil % map_eq_nil % encode_list_neq_nil.
+
+  Qed.
 
 End APP_right.
 
@@ -295,7 +398,6 @@ Section unfold.
   Variable Σ : finType.
   Context {Henc1 : codable Σ Heap}.
   Context {Henc2 : codable Σ (list HClos)}.
-  Context {Henc3 : codable Σ term}.
 
   Variable n : nat.
 
@@ -310,9 +412,9 @@ Section unfold.
                      forall g, forall H : Heap, 
                          t[@i_g] ≃ [g]%list ->
                          t[@i_H] ≃ H ->
-                         exists t,
-                           reprC H g t /\
-                           t'[@o_t] ≃ t).
+                       forall t,
+                           reprC H g t ->
+                           t'[@o_t] ≃ compile t).
   Admitted.
 
 End unfold.
