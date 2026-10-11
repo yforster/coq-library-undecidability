@@ -29,6 +29,8 @@ depends: [
   "rocq-core" {= "9.2.0"}
   "rocq-stdlib" {= "9.1.0"}
   "ocaml"
+  "rocq-mathcomp-algebra" {>= "2.6.0"}
+  "rocq-mathcomp-field" {>= "2.6.0"}
   # "rocq-metarocq-template"
 ]
 

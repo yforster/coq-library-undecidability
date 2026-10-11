@@ -11,32 +11,27 @@ jobs:
 
     strategy:
       matrix:
-        coq_version: 
-          - '9.2'
-        ocaml_version:
-          - '4.14-flambda'
+        image:
+          - 'mathcomp/mathcomp:2.6.0-rocq-prover-9.2'
       fail-fast: true
 
     steps:
 
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
       - name: Docker-Coq-Action
         uses: coq-community/docker-coq-action@v1
         with:
-          coq_version: ${{ matrix.coq_version }}
-          ocaml_version: ${{ matrix.ocaml_version }}
-          before_script: |
-            startGroup "Workaround permission issue"
-              sudo chown -R 1000:1000 .  # <--
-              opam exec -- ocamlfind list
-            endGroup
+          custom_image: ${{ matrix.image }}
           before_install: |
+            startGroup "Fix workspace permissions"
+              sudo chown -R 1000:1000 .
+            endGroup
+          install: |
             startGroup "Print opam config"
-              sudo chown -R 1000:1000 .  
               opam config list; opam repo list; opam list
             endGroup
           script: |
@@ -50,4 +45,4 @@ jobs:
       - name: Revert permissions
         # to avoid a warning at cleanup time
         if: ${{ always() }}
-        run: sudo chown -R 1001:116 .  # <--
+        run: sudo chown -R 1001:116 .
